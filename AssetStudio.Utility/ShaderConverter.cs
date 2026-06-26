@@ -158,51 +158,122 @@ namespace AssetStudio
                 {
                     sb.Append(ConvertSerializedShaderState(m_Passe.m_State));
 
-                    if (m_Passe.progVertex.m_SubPrograms.Count > 0)
+                    AppendSerializedProgram(sb, "vp", m_Passe.progVertex, platforms, shaderPrograms);
+                    AppendSerializedProgram(sb, "fp", m_Passe.progFragment, platforms, shaderPrograms);
+                    AppendSerializedProgram(sb, "gp", m_Passe.progGeometry, platforms, shaderPrograms);
+                    AppendSerializedProgram(sb, "hp", m_Passe.progHull, platforms, shaderPrograms);
+                    AppendSerializedProgram(sb, "dp", m_Passe.progDomain, platforms, shaderPrograms);
+                    if (m_Passe.progRayTracing != null)
                     {
-                        sb.Append("Program \"vp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progVertex.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progFragment.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"fp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progFragment.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progGeometry.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"gp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progGeometry.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progHull.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"hp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progHull.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progDomain.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"dp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progDomain.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
-                    }
-
-                    if (m_Passe.progRayTracing?.m_SubPrograms.Count > 0)
-                    {
-                        sb.Append("Program \"rtp\" {\n");
-                        sb.Append(ConvertSerializedSubPrograms(m_Passe.progRayTracing.m_SubPrograms, platforms, shaderPrograms));
-                        sb.Append("}\n");
+                        AppendSerializedProgram(sb, "rtp", m_Passe.progRayTracing, platforms, shaderPrograms);
                     }
                 }
                 sb.Append("}\n");
             }
             return sb.ToString();
+        }
+
+        private static void AppendSerializedProgram(StringBuilder sb, string programName, SerializedProgram program, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms)
+        {
+            var content = ConvertSerializedProgram(program, platforms, shaderPrograms);
+            if (string.IsNullOrEmpty(content))
+            {
+                return;
+            }
+
+            sb.Append($"Program \"{programName}\" {{\n");
+            sb.Append(content);
+            sb.Append("}\n");
+        }
+
+        private static string ConvertSerializedProgram(SerializedProgram program, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms)
+        {
+            if (program.m_SubPrograms.Count > 0)
+            {
+                return ConvertSerializedSubPrograms(program.m_SubPrograms, platforms, shaderPrograms);
+            }
+
+            if (program.m_PlayerSubPrograms != null && program.m_PlayerSubPrograms.Any(group => group.Count > 0))
+            {
+                return ConvertSerializedPlayerSubPrograms(program.m_PlayerSubPrograms, platforms, shaderPrograms);
+            }
+
+            return string.Empty;
+        }
+
+        private static string ConvertSerializedPlayerSubPrograms(List<List<SerializedPlayerSubProgram>> playerSubProgramGroups, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms)
+        {
+            var sb = new StringBuilder();
+            for (var i = 0; i < platforms.Length; i++)
+            {
+                var platform = platforms[i];
+                var playerSubs = GetPlayerSubProgramsForPlatform(playerSubProgramGroups, platform);
+                if (playerSubs == null || playerSubs.Count == 0)
+                {
+                    continue;
+                }
+
+                var isTier = playerSubs.Count > 1;
+                for (var v = 0; v < playerSubs.Count; v++)
+                {
+                    var subProgram = playerSubs[v];
+                    if (!CheckGpuProgramUsable(platform, subProgram.m_GpuProgramType))
+                    {
+                        continue;
+                    }
+
+                    sb.Append($"SubProgram \"{GetPlatformString(platform)} ");
+                    if (isTier)
+                    {
+                        sb.Append($"variant{v:00} ");
+                    }
+                    sb.Append("\" {\n");
+
+                    var blobIndex = (int)subProgram.m_BlobIndex;
+                    var shaderSubProgram = shaderPrograms[i].m_SubPrograms?[blobIndex];
+                    if (shaderSubProgram != null)
+                    {
+                        sb.Append(shaderSubProgram.Export());
+                    }
+                    else
+                    {
+                        sb.Append($"// missing shader blob at index {blobIndex}\n");
+                    }
+
+                    sb.Append("\n}\n");
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        private static List<SerializedPlayerSubProgram> GetPlayerSubProgramsForPlatform(List<List<SerializedPlayerSubProgram>> playerSubProgramGroups, ShaderCompilerPlatform platform)
+        {
+            var platformIndex = (int)platform;
+            if (platformIndex >= 0 && platformIndex < playerSubProgramGroups.Count)
+            {
+                var platformGroup = playerSubProgramGroups[platformIndex];
+                if (platformGroup.Count > 0 && platformGroup.Any(subProgram => CheckGpuProgramUsable(platform, subProgram.m_GpuProgramType)))
+                {
+                    return platformGroup.Where(subProgram => CheckGpuProgramUsable(platform, subProgram.m_GpuProgramType)).ToList();
+                }
+            }
+
+            foreach (var group in playerSubProgramGroups)
+            {
+                if (group.Count == 0)
+                {
+                    continue;
+                }
+
+                var matching = group.Where(subProgram => CheckGpuProgramUsable(platform, subProgram.m_GpuProgramType)).ToList();
+                if (matching.Count > 0)
+                {
+                    return matching;
+                }
+            }
+
+            return null;
         }
 
         private static string ConvertSerializedSubPrograms(List<SerializedSubProgram> m_SubPrograms, ShaderCompilerPlatform[] platforms, ShaderProgram[] shaderPrograms)

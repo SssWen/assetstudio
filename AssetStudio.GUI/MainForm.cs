@@ -2629,27 +2629,34 @@ namespace AssetStudio.GUI
         #region FMOD
         private void FMODinit()
         {
-            FMODreset();
-
-            var result = FMOD.Factory.System_Create(out system);
-            if (ERRCHECK(result)) { return; }
-
-            result = system.getVersion(out var version);
-            ERRCHECK(result);
-            if (version < FMOD.VERSION.number)
+            try
             {
-                Logger.Error($"Error!  You are using an old version of FMOD {version:X}.  This program requires {FMOD.VERSION.number:X}.");
-                Application.Exit();
+                FMODreset();
+
+                var result = FMOD.Factory.System_Create(out system);
+                if (ERRCHECK(result)) { return; }
+
+                result = system.getVersion(out var version);
+                ERRCHECK(result);
+                if (version < FMOD.VERSION.number)
+                {
+                    Logger.Error($"Error!  You are using an old version of FMOD {version:X}.  This program requires {FMOD.VERSION.number:X}.");
+                    return;
+                }
+
+                result = system.init(2, FMOD.INITFLAGS.NORMAL, IntPtr.Zero);
+                if (ERRCHECK(result)) { return; }
+
+                result = system.getMasterSoundGroup(out masterSoundGroup);
+                if (ERRCHECK(result)) { return; }
+
+                result = masterSoundGroup.setVolume(FMODVolume);
+                if (ERRCHECK(result)) { return; }
             }
-
-            result = system.init(2, FMOD.INITFLAGS.NORMAL, IntPtr.Zero);
-            if (ERRCHECK(result)) { return; }
-
-            result = system.getMasterSoundGroup(out masterSoundGroup);
-            if (ERRCHECK(result)) { return; }
-
-            result = masterSoundGroup.setVolume(FMODVolume);
-            if (ERRCHECK(result)) { return; }
+            catch (Exception e)
+            {
+                Logger.Error($"FMOD initialization failed, audio preview disabled: {e.Message}");
+            }
         }
 
         private void FMODreset()

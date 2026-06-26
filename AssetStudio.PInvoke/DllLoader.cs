@@ -27,14 +27,19 @@ namespace AssetStudio.PInvoke
 
         private static string GetDirectedDllDirectory()
         {
-            var localPath = Process.GetCurrentProcess().MainModule.FileName;
-            var localDir = Path.GetDirectoryName(localPath);
-
             var subDir = Environment.Is64BitProcess ? "x64" : "x86";
 
-            var directedDllDir = Path.Combine(localDir, subDir);
+            // AppContext.BaseDirectory points to the app folder for both .exe and `dotnet app.dll` launches.
+            // MainModule.FileName points at dotnet.exe when launched via `dotnet`, which breaks native DLL lookup.
+            var baseDir = AppContext.BaseDirectory;
+            if (!string.IsNullOrEmpty(baseDir))
+            {
+                return Path.Combine(baseDir, subDir);
+            }
 
-            return directedDllDir;
+            var localPath = Process.GetCurrentProcess().MainModule!.FileName;
+            var localDir = Path.GetDirectoryName(localPath)!;
+            return Path.Combine(localDir, subDir);
         }
 
         private static partial class Win32
@@ -53,7 +58,7 @@ namespace AssetStudio.PInvoke
                     var errorCode = Marshal.GetLastWin32Error();
                     var exception = new Win32Exception(errorCode);
 
-                    throw new DllNotFoundException(exception.Message, exception);
+                    throw new DllNotFoundException($"Failed to load native library '{directedDllPath}'. {exception.Message}", exception);
                 }
             }
 
